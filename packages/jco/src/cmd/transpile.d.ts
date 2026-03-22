@@ -66,6 +66,7 @@ type TranspilationOptions = {
     outDir?: string;
     multiMemory?: boolean;
     experimentalIdlImports?: boolean;
+    passthroughImports?: string[];
     optArgs?: string[];
 };
 
@@ -124,6 +125,7 @@ export function transpileComponent(
         outDir?: string;
         multiMemory?: boolean;
         experimentalIdlImports?: boolean;
+    passthroughImports?: string[];
         optArgs?: string[];
     },
 ): Promise<{

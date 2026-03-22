@@ -117,7 +117,7 @@ program
     )
     .option("--no-nodejs-compat", "disables compatibility in Node.js without a fetch global")
     .option("-M, --map <mappings...>", "specifier=./output custom mappings for the component imports")
-    .option("--passthrough-imports <patterns...>", "import patterns to pass through without JS trampolines (e.g., "frida:host/*")")
+    .option("--passthrough-imports <patterns...>", "import patterns to pass through without JS trampolines")
     .option("--no-wasi-shim", "disable automatic rewriting of WASI imports to use @bytecodealliance/preview2-shim")
     .option("--stub", "generate a stub implementation from a WIT file directly")
     .option("--js", "output JS instead of core WebAssembly")
