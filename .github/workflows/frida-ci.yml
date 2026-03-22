@@ -23,6 +23,10 @@ jobs:
         with:
           targets: wasm32-unknown-unknown,wasm32-wasip1
 
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: jco-frida
+
       - name: Install dependencies
         run: npm install
 
@@ -30,15 +34,13 @@ jobs:
         run: npm run build
 
       - name: Smoke test
-        run: |
-          npx jco --version
-          echo "Build successful"
+        run: npx jco --version
 
       - name: Pack npm tarball
         run: |
           cd packages/jco
           npm pack
-          mv jco-*.tgz ../../jco-frida.tgz
+          mv *.tgz ../../jco-frida.tgz
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
