@@ -200,6 +200,7 @@ export async function transpileComponent(component, opts = {}) {
         noNamespacedExports: opts.namespacedExports === false,
         multiMemory: opts.multiMemory === true,
         idlImports: opts.experimentalIdlImports === true,
+        passthroughImports: opts.passthroughImports ? opts.passthroughImports : null,
     });
 
     let outDir = (opts.outDir ?? "").replace(/\\/g, "/");

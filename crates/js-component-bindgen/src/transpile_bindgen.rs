@@ -54,6 +54,22 @@ use crate::{
     requires_async_porcelain, source, uwrite, uwriteln,
 };
 
+/// Simple glob matching for passthrough import patterns.
+/// Supports trailing "*" as a wildcard (e.g., "frida:host/*" matches "frida:host/frida-mem@1.0.0").
+/// An exact match is also supported.
+fn matches_passthrough_pattern(name: &str, pattern: &str) -> bool {
+    if let Some(prefix) = pattern.strip_suffix("*") {
+        name.starts_with(prefix)
+    } else {
+        name == pattern
+    }
+}
+
+/// Check if an import name matches any of the passthrough patterns.
+fn is_passthrough_import(name: &str, patterns: &[String]) -> bool {
+    patterns.iter().any(|p| matches_passthrough_pattern(name, p))
+}
+
 /// Number of flat parameters allowed before spilling over to memory
 /// for an async function
 ///
@@ -99,6 +115,10 @@ pub struct TranspileOpts {
     /// Configure whether to use `async` imports or exports with
     /// JavaScript Promise Integration (JSPI).
     pub async_mode: Option<AsyncMode>,
+    /// Import patterns that should bypass JS trampoline generation.
+    /// Patterns use simple glob matching (e.g., "frida:host/*").
+    /// Matching imports will be passed through directly from the caller's import object.
+    pub passthrough_imports: Vec<String>,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -286,6 +306,7 @@ pub fn transpile_bindgen(
         resource_tables_initialized: BTreeMap::new(),
         stream_tables,
         err_ctx_tables,
+        passthrough_trampoline_indices: HashSet::new(),
     };
     instantiator.sizes.fill(resolve);
     instantiator.initialize();
@@ -611,6 +632,9 @@ struct Instantiator<'a, 'b> {
     // Mapping of err ctx indices to component indices
     err_ctx_tables:
         BTreeMap<TypeComponentLocalErrorContextTableIndex, RuntimeComponentInstanceIndex>,
+
+    /// Set of trampoline indices that are passthrough (bypass JS trampoline generation)
+    passthrough_trampoline_indices: HashSet<u32>,
 }
 
 impl<'a> ManagesIntrinsics for Instantiator<'a, '_> {
@@ -1980,6 +2004,17 @@ impl<'a> Instantiator<'a, '_> {
                 lower_ty,
                 options,
             } => {
+                // For passthrough imports, directly assign _trampoline to trampoline
+                // without any lower import wrapping
+                if self.passthrough_trampoline_indices.contains(&i) {
+                    uwriteln!(
+                        self.src.js,
+                        "let trampoline{} = _trampoline{};",
+                        i, i,
+                    );
+                    return;
+                }
+
                 let canon_opts = self
                     .component
                     .options
@@ -2933,8 +2968,58 @@ impl<'a> Instantiator<'a, '_> {
             .params
             .len();
 
-        // Generate the JS trampoline function for a bound import
+        // Check if this import should be passed through without JS trampoline generation
         let trampoline_idx = trampoline.as_u32();
+        if is_passthrough_import(import_name, &self.bindgen.opts.passthrough_imports) {
+            // For passthrough imports, directly reference the callee instead of generating
+            // lifting/lowering code. This preserves the original import function so V8 can
+            // apply compile-time import inlining (intrinsics).
+            uwriteln!(
+                self.src.js,
+                "const _trampoline{trampoline_idx} = {callee_name};"
+            );
+            // Mark this trampoline as passthrough so Trampoline::LowerImport skips wrapping
+            self.passthrough_trampoline_indices.insert(trampoline_idx);
+
+            // Still need to set up the import binding
+            let (import_name_mapped, binding_name) = match func.kind {
+                FunctionKind::Freestanding | FunctionKind::AsyncFreestanding => {
+                    (func_name.to_lower_camel_case(), callee_name)
+                }
+                FunctionKind::Method(tid)
+                | FunctionKind::AsyncMethod(tid)
+                | FunctionKind::Static(tid)
+                | FunctionKind::AsyncStatic(tid)
+                | FunctionKind::Constructor(tid) => {
+                    let ty = &self.resolve.types[tid];
+                    (
+                        ty.name.as_ref().unwrap().to_upper_camel_case(),
+                        Instantiator::resource_name(
+                            self.resolve,
+                            &mut self.bindgen.local_names,
+                            tid,
+                            &self.imports_resource_types,
+                        )
+                        .to_string(),
+                    )
+                }
+            };
+            self.ensure_import(
+                import_specifier,
+                iface_name,
+                maybe_iface_member.as_deref(),
+                if iface_name.is_some() {
+                    Some(import_name_mapped.to_string())
+                } else {
+                    None
+                },
+                binding_name,
+            );
+            return;
+        }
+
+        // Generate the JS trampoline function for a bound import
+
         match self.bindgen.opts.import_bindings {
             None | Some(BindingsMode::Js) | Some(BindingsMode::Hybrid) => {
                 // TODO(breaking): remove as we do not not need to manually specify async imports anymore in P3 w/ native coloring
